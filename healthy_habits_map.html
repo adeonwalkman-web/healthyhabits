@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Healthy Habits Map - HTML5 Canvas</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f3f7ff;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 0 0 5px 0;
+      font-size: 1.6rem;
+      text-align: center;
+    }
+
+    p.subtitle {
+      margin: 0 0 15px 0;
+      font-size: 0.95rem;
+      text-align: center;
+      max-width: 880px;
+    }
+
+    #canvasContainer {
+      position: relative;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+      border-radius: 20px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 8px 18px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      background: linear-gradient(135deg, #4facfe, #00f2fe);
+      color: white;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      transition: transform 0.1s ease, box-shadow 0.1s ease, opacity 0.15s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+      opacity: 0.96;
+    }
+
+    #feedback {
+      margin-top: 8px;
+      font-size: 0.9rem;
+      text-align: center;
+      min-height: 1.2em;
+    }
+  </style>
+</head>
+<body>
+  <h1>Healthy Habits Map</h1>
+  <p class="subtitle">
+    Arrastra las tarjetas a la zona <strong>verde</strong> (hábitos saludables) o a la zona
+    <strong>naranja</strong> (hábitos para mejorar) y luego haz clic en <strong>Check</strong>.
+    Las tarjetas que se queden en la columna izquierda cuentan como <strong>no clasificadas</strong>.
+  </p>
+
+  <div id="canvasContainer">
+    <canvas id="gameCanvas" width="900" height="520"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="checkBtn">Check</button>
+    <button id="resetBtn">Reset</button>
+  </div>
+
+  <div id="feedback"></div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const feedbackEl = document.getElementById("feedback");
+
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+
+    const MARGIN = 24;
+    const MID_Y = HEIGHT / 2;
+
+    // Panel lateral izquierdo más ancho
+    const LEFT_PANEL_WIDTH = 280;
+    // Inicio de la zona derecha (verdes/naranja)
+    const RIGHT_X_START = MARGIN + LEFT_PANEL_WIDTH + 20;
+    const RIGHT_WIDTH = WIDTH - RIGHT_X_START - MARGIN;
+
+    const cardWidth = 230;
+    const cardHeight = 48;
+
+    const cardsData = [
+      { text: "Drink water 💧", healthy: true },
+      { text: "Eat fruit & veggies 🍎", healthy: true },
+      { text: "Play outside ⚽", healthy: true },
+      { text: "Sleep early 😴", healthy: true },
+      { text: "Skip breakfast ❌", healthy: false },
+      { text: "Too much screen 📱", healthy: false },
+      { text: "Go to bed very late 🌙", healthy: false },
+      { text: "Eat lots of sweets 🍬", healthy: false }
+    ];
+
+    let cards = [];
+    let initialPositions = [];
+
+    let draggingCard = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    // Polyfill roundRect si no existe
+    if (!CanvasRenderingContext2D.prototype.roundRect) {
+      CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        this.beginPath();
+        this.moveTo(x + r, y);
+        this.arcTo(x + w, y, x + w, y + h, r);
+        this.arcTo(x + w, y + h, x, y + h, r);
+        this.arcTo(x, y + h, x, y, r);
+        this.arcTo(x, y, x + w, y, r);
+        this.closePath();
+        return this;
+      };
+    }
+
+    function initCards() {
+      cards = [];
+      const startX = MARGIN + 25;
+      const startY = MARGIN * 2 + 70;
+      const verticalGap = 10;
+
+      cardsData.forEach((data, index) => {
+        const row = index;
+        const x = startX;
+        const y = startY + row * (cardHeight + verticalGap);
+
+        const card = {
+          text: data.text,
+          healthy: data.healthy,
+          x,
+          y,
+          w: cardWidth,
+          h: cardHeight,
+          baseColor: data.healthy ? "#e8fff1" : "#fff3e8",
+          borderColor: "rgba(0,0,0,0.25)"
+        };
+        cards.push(card);
+      });
+
+      initialPositions = cards.map(c => ({ x: c.x, y: c.y }));
+    }
+
+    function drawBackground() {
+      // Fondo
+      const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      gradient.addColorStop(0, "#f0f7ff");
+      gradient.addColorStop(0.5, "#ffffff");
+      gradient.addColorStop(1, "#fff7e8");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Panel izquierdo
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "rgba(0,0,0,0.08)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(MARGIN, MARGIN * 2, LEFT_PANEL_WIDTH, HEIGHT - MARGIN * 4, 16);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#222";
+      ctx.font = "18px system-ui";
+      ctx.fillText("Healthy Habits Map", MARGIN + 14, MARGIN * 3);
+
+      ctx.font = "14px system-ui";
+      ctx.fillStyle = "#444";
+      ctx.fillText("Habits cards", MARGIN + 14, MARGIN * 3.9);
+
+      ctx.font = "11px system-ui";
+      ctx.fillStyle = "#666";
+      ctx.fillText("Arrastra cada tarjeta a la zona correcta.", MARGIN + 14, MARGIN * 4.6);
+
+      // Zona superior (hábitos saludables)
+      ctx.fillStyle = "#e5fbe9";
+      ctx.fillRect(RIGHT_X_START, MARGIN * 2, RIGHT_WIDTH, MID_Y - MARGIN * 3);
+
+      // Zona inferior (hábitos a mejorar)
+      ctx.fillStyle = "#ffe9d5";
+      ctx.fillRect(RIGHT_X_START, MID_Y + MARGIN, RIGHT_WIDTH, HEIGHT - MID_Y - MARGIN * 3);
+
+      // Etiquetas zonas
+      ctx.font = "18px system-ui";
+      ctx.fillStyle = "#1b7f3b";
+      ctx.fillText("Healthy habits 😊", RIGHT_X_START + 20, MARGIN * 3);
+
+      ctx.font = "12px system-ui";
+      ctx.fillStyle = "#2b6337";
+      ctx.fillText("Drop here the habits you want to keep.", RIGHT_X_START + 20, MARGIN * 4.1);
+
+      ctx.font = "18px system-ui";
+      ctx.fillStyle = "#c4551f";
+      ctx.fillText("Habits to improve ⚠️", RIGHT_X_START + 20, MID_Y + MARGIN * 3);
+
+      ctx.font = "12px system-ui";
+      ctx.fillStyle = "#7b3a18";
+      ctx.fillText("Drop here the habits you want to change.", RIGHT_X_START + 20, MID_Y + MARGIN * 4.1);
+
+      // Línea central en la zona derecha
+      ctx.strokeStyle = "rgba(0,0,0,0.15)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.moveTo(RIGHT_X_START, MID_Y);
+      ctx.lineTo(RIGHT_X_START + RIGHT_WIDTH, MID_Y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Ruta (mañana / tarde / noche)
+      const routeY = MID_Y;
+      const cx1 = RIGHT_X_START + RIGHT_WIDTH * 0.2;
+      const cx2 = RIGHT_X_START + RIGHT_WIDTH * 0.5;
+      const cx3 = RIGHT_X_START + RIGHT_WIDTH * 0.8;
+
+      ctx.fillStyle = "#4facfe";
+      [cx1, cx2, cx3].forEach(cx => {
+        ctx.beginPath();
+        ctx.arc(cx, routeY, 7, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.font = "11px system-ui";
+      ctx.fillStyle = "#555";
+      ctx.fillText("Morning", cx1 - 20, routeY - 14);
+      ctx.fillText("Afternoon", cx2 - 28, routeY - 14);
+      ctx.fillText("Night", cx3 - 15, routeY - 14);
+    }
+
+    function drawCards() {
+      cards.forEach(card => {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.15)";
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = card.baseColor;
+        ctx.beginPath();
+        ctx.roundRect(card.x, card.y, card.w, card.h, 14);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.strokeStyle = card.borderColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(card.x, card.y, card.w, card.h, 14);
+        ctx.stroke();
+
+        ctx.fillStyle = "#222";
+        ctx.font = "13px system-ui";
+        ctx.textBaseline = "middle";
+        const textX = card.x + 10;
+        const textY = card.y + card.h / 2;
+        ctx.fillText(card.text, textX, textY);
+      });
+    }
+
+    function drawScene() {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      drawBackground();
+      drawCards();
+    }
+
+    function getMousePos(evt) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (evt.clientX - rect.left) * (canvas.width / rect.width),
+        y: (evt.clientY - rect.top) * (canvas.height / rect.height)
+      };
+    }
+
+    function isPointInCard(x, y, card) {
+      return (
+        x >= card.x &&
+        x <= card.x + card.w &&
+        y >= card.y &&
+        y <= card.y + card.h
+      );
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      const pos = getMousePos(e);
+
+      for (let i = cards.length - 1; i >= 0; i--) {
+        const card = cards[i];
+        if (isPointInCard(pos.x, pos.y, card)) {
+          draggingCard = card;
+          dragOffsetX = pos.x - card.x;
+          dragOffsetY = pos.y - card.y;
+          // Traer al frente
+          cards.splice(i, 1);
+          cards.push(card);
+          break;
+        }
+      }
+      drawScene();
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+      if (!draggingCard) return;
+      const pos = getMousePos(e);
+      draggingCard.x = pos.x - dragOffsetX;
+      draggingCard.y = pos.y - dragOffsetY;
+      drawScene();
+    });
+
+    canvas.addEventListener("mouseup", () => {
+      draggingCard = null;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      draggingCard = null;
+    });
+
+    // Botón Check
+    document.getElementById("checkBtn").addEventListener("click", () => {
+      let correct = 0;
+      const total = cards.length;
+
+      cards.forEach(card => {
+        const centerX = card.x + card.w / 2;
+        const centerY = card.y + card.h / 2;
+
+        // Si la tarjeta sigue en el panel izquierdo, cuenta como incorrecta
+        if (centerX < RIGHT_X_START) {
+          card.borderColor = "#d93025";
+          return;
+        }
+
+        const isInHealthyZone = centerY < MID_Y;
+        const shouldBeHealthy = card.healthy;
+
+        const isCorrect =
+          (shouldBeHealthy && isInHealthyZone) ||
+          (!shouldBeHealthy && !isInHealthyZone);
+
+        card.borderColor = isCorrect ? "#28a745" : "#d93025";
+        if (isCorrect) correct++;
+      });
+
+      drawScene();
+
+      feedbackEl.textContent =
+        `Has clasificado correctamente ${correct} de ${total} hábitos. ` +
+        `Las tarjetas que queden en la columna izquierda cuentan como incorrectas.`;
+    });
+
+    // Botón Reset
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      cards.forEach((card, index) => {
+        card.x = initialPositions[index].x;
+        card.y = initialPositions[index].y;
+        card.borderColor = "rgba(0,0,0,0.25)";
+      });
+      feedbackEl.textContent = "";
+      drawScene();
+    });
+
+    // Inicialización
+    initCards();
+    drawScene();
+  </script>
+</body>
+</html>
